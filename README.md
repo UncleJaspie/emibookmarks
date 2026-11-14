@@ -12,6 +12,10 @@ While EMI provides a powerful recipe viewer and crafting planner, its Recipe Tre
 
 Inspired by the advanced bookmark management system of **GregTech New Horizons' NEI (GTNH NEI)**, EMI Bookmarks brings a dedicated, separate bookmark sidebar to EMI, combining the organizational strengths of GTNH NEI with EMI's Recipe Tree functionality.
 
+**USAGE**
+
+EMI Config → Left Sidebar → Swap Favorites with Grouped Bookmarks (first option in the list)
+
 ## Features
 
 ### Advanced Bookmark Organization
