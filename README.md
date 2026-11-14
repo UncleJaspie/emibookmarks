@@ -48,3 +48,10 @@ EMI Bookmarks brings together the familiarity of GTNH NEI's bookmark management 
   
   
 EMI Bookmarks doesn't automatically solve EMI's recipe-selection quirks. Instead, it allows players to select their preferred recipes and save those choices as part of their crafting plans. That's an important difference, especially for GregTech players who frequently encounter multiple ways to produce the same item.
+
+
+
+
+***
+
+Support me on [kofi](ko-fi.com/unclejaspie)
