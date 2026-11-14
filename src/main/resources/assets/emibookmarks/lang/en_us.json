@@ -1,0 +1,12 @@
+{
+  "key.categories.emibookmarks": "EMI Bookmarks",
+  "key.emibookmarks.toggle": "Show Grouped Bookmarks / return to previous page",
+  "key.emibookmarks.tree": "Open hovered item's EMI recipe tree",
+  "key.emibookmarks.bookmark": "Bookmark item / Shift: recipe or remove group / Ctrl+Shift: counted recipe / Ctrl+Alt: recipe tree",
+  "emibookmarks.sidebar.name": "Grouped Bookmarks",
+  "emibookmarks.sidebar.description": "Compact bookmarks, recipe rows and groups",
+  "emibookmarks.recipe.capture": "Toggle this recipe in Grouped Bookmarks",
+  "emibookmarks.options.title": "Grouped Bookmarks options",
+  "emibookmarks.options.combine": "Combine identical ingredients: %s",
+  "emibookmarks.options.combine.help": "Combine matching consumed inputs within each recipe. Saved slots, accepted alternatives, recipes and groups remain separate."
+}

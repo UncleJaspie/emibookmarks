@@ -1,0 +1,7 @@
+EMI integration targets EMI 1.1.24+1.20.1, https://github.com/emilyploszaj/emi.
+The sidebar page uniqueness policy and recipe action-column geometry were adapted
+to the pinned EMI interfaces. The addon's bookmark model, page identity, renderer,
+storage and interaction implementation are maintained independently.
+
+EMI: Copyright (c) 2022 Emi. MIT License.
+The full upstream notice is included at META-INF/licenses/emi-LICENSE.txt.
