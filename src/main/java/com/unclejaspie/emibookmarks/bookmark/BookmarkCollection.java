@@ -83,6 +83,8 @@ public final class BookmarkCollection {
     public final String name;
     public final List<Recipe> recipes = new ArrayList<>();
     public final List<Group> groups = new ArrayList<>();
+    /** Saved page sections; absent entries belong to the original automatic section. */
+    public final java.util.Map<UUID, Integer> pageSections = new java.util.HashMap<>();
     public Mode mode = Mode.COMPACT;
     public boolean chain;
     public boolean collapsed;
@@ -131,6 +133,7 @@ public final class BookmarkCollection {
         normalize();
     }
     private void normalize() {
+        pageSections.keySet().retainAll(recipes.stream().map(Recipe::id).toList());
         List<Group> normalized = new ArrayList<>();
         for (Group old : groups) {
             Group run = null;

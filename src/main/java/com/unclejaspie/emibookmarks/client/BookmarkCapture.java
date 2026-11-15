@@ -32,8 +32,10 @@ public final class BookmarkCapture {
     public static BookmarkCollection.Recipe item(EmiIngredient hovered, boolean retainCount) {
         var snapshot = hovered.copy();
         if (!retainCount) snapshot.setAmount(1);
-        return new BookmarkCollection.Recipe(UUID.randomUUID(), false, null,
+        var record = new BookmarkCollection.Recipe(UUID.randomUUID(), false, null,
                 List.of(slot(snapshot, BookmarkSlot.Role.ITEM)), 1);
+        record.counted(retainCount);
+        return record;
     }
     public static BookmarkCollection.Recipe recipe(EmiRecipe recipe, EmiIngredient hovered) {
         var outputs = recipe.getOutputs().stream().filter(s -> !s.isEmpty()).toList();

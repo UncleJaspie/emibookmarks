@@ -7,6 +7,30 @@ import dev.emi.emi.screen.RecipeScreen;
 import net.minecraft.client.gui.screens.Screen;
 
 public final class BookmarkRecipeContext {
+    private static final java.util.Map<Screen, dev.emi.emi.api.stack.EmiIngredient> LOOKUPS = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    /** Keep lookup intent with its own viewer, including history, rather than a stale global item. */
+    public static void openedFor(Screen screen, dev.emi.emi.api.stack.EmiIngredient ingredient) {
+        if (!(screen instanceof RecipeScreen)) return;
+        if (ingredient == null || ingredient.isEmpty()) LOOKUPS.remove(screen);
+        else LOOKUPS.put(screen, ingredient.copy());
+    }
+    public static dev.emi.emi.api.stack.EmiIngredient lookup(Screen screen) {
+        return LOOKUPS.getOrDefault(screen, dev.emi.emi.api.stack.EmiStack.EMPTY);
+    }
+    /** Lookup counts/chance describe the clicked item, not the recipe's yield. Require a unique resource/NBT match. */
+    public static int lookupOutput(EmiRecipe recipe, dev.emi.emi.api.stack.EmiIngredient ingredient) {
+        if (ingredient == null || ingredient.isEmpty()) return -1;
+        int found = -1;
+        var outputs = recipe.getOutputs().stream().filter(s -> !s.isEmpty()).toList();
+        for (int i=0; i<outputs.size(); i++) {
+            var output = outputs.get(i);
+            boolean matches = output.getEmiStacks().stream().anyMatch(o -> ingredient.getEmiStacks().stream()
+                    .anyMatch(q -> o.isEqual(q) && java.util.Objects.equals(o.getNbt(), q.getNbt())));
+            if (matches) { if (found >= 0) return -1; found = i; }
+        }
+        return found;
+    }
+    public static int lookupOutput(Screen screen, EmiRecipe recipe) { return lookupOutput(recipe, lookup(screen)); }
     private static final java.util.Map<Class<?>, java.util.Optional<java.lang.reflect.Field>> NESTED = new java.util.concurrent.ConcurrentHashMap<>();
     /** LDLib/GT wraps native EMI slots in a public slots list instead of exposing them at the top level. */
     public static java.util.List<dev.emi.emi.api.widget.SlotWidget> slots(dev.emi.emi.screen.WidgetGroup group) {

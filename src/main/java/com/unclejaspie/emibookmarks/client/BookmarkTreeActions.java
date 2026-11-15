@@ -15,50 +15,17 @@ import java.util.*;
 
 /** Imports EMI-selected routes without replacing BoM.tree, writing defaults or touching favorites. */
 public final class BookmarkTreeActions {
-    private record Route(EmiRecipe recipe, EmiIngredient target, MaterialNode node, BookmarkCollection.Recipe saved, int primaryHint) {
-        Route(EmiRecipe recipe, EmiIngredient target, MaterialNode node, BookmarkCollection.Recipe saved) { this(recipe, target, node, saved, -1); }
+    private record Route(EmiRecipe recipe, EmiIngredient target, MaterialNode node, int primaryHint) {
+        Route(EmiRecipe recipe, EmiIngredient target, MaterialNode node) { this(recipe, target, node, -1); }
     }
     private record Editing(MaterialTree tree, UUID collection, UUID group, UUID recipe, UUID goal, String fingerprint) {}
     private static Editing editing;
     public static void clearSession() { editing = null; }
 
     public static void hovered(Screen screen, int x, int y, BookmarkCollection.Recipe saved, BookmarkSlot slot) {
-        if (screen instanceof BoMScreen) { importCurrent(); return; }
-        if (!BookmarkClientConfig.AUTO_TREE.get()) { openNative(screen, x, y, saved, slot); return; }
-        run(() -> {
-            if (screen instanceof BoMScreen) return currentPlan();
-            var source = new Routes(null);
-            Route root;
-            if (saved != null && saved.isRecipe() && slot.role == BookmarkSlot.Role.OUTPUT) {
-                var recipe = BookmarkCapture.resolve(saved);
-                if (recipe == null) throw new IllegalArgumentException("Saved recipe is unavailable; its snapshot was retained");
-                root = new Route(recipe, BookmarkCapture.ingredient(slot, 1), null, copy(saved, slot.id));
-            } else {
-                var ingredient = saved == null ? EmiApi.getHoveredStack(x, y, true).getStack() : BookmarkCapture.ingredient(slot, saved.batches());
-                var visible = saved == null ? BookmarkRecipeContext.at(screen, x, y) : null;
-                if (visible != null) {
-                    var output = BookmarkRecipeContext.outputAt(screen, x, y, visible);
-                    if (output.isEmpty() && visible.getOutputs().size() != 1)
-                        throw new IllegalArgumentException("Hover the intended recipe output before building its tree");
-                    root = new Route(visible, output.isEmpty() ? visible.getOutputs().get(0) : output, null, null);
-                } else {
-                    var recipe = source.resolve(ingredient);
-                    if (recipe == null) throw new IllegalArgumentException("No EMI recipe found; choose a recipe or set its heart default");
-                    root = new Route(recipe, ingredient, null, null);
-                }
-            }
-            var rootRecord = source.capture(root);
-            if (saved != null && !saved.isRecipe()) {
-                long requested = slot.amount(saved.batches());
-                long yield = rootRecord.icons().stream().filter(s -> s.id.equals(rootRecord.primaryOutput())).findFirst().orElseThrow().variant().amount();
-                long batches = requested / yield + (requested % yield == 0 ? 0 : 1);
-                if (batches > 1) rootRecord.adjustBatches(1, batches - 1);
-                if (rootRecord.batches() != batches) throw new IllegalArgumentException("Requested tree quantity exceeds the safe range");
-            }
-            return BookmarkTreePlanner.build(root, source);
-        });
+        if (screen instanceof BoMScreen) importCurrent();
+        else openNative(screen, x, y, saved, slot);
     }
-
     public static void importCurrent() {
         if (editing == null || editing.tree != BoM.tree || !editing.collection.equals(BookmarkWorkspace.collection().id)) { run(BookmarkTreeActions::currentPlan); return; }
         try {
@@ -156,7 +123,7 @@ public final class BookmarkTreeActions {
             if (original != null && original.recipeKey() != null && root.recipe.getId() != null && original.recipeKey().equals(root.recipe.getId().toString())) {
                 int index = 0;
                 for (var s : original.icons()) if (s.role == BookmarkSlot.Role.OUTPUT) {
-                    if (s.id.equals(original.primaryOutput())) { root = new Route(root.recipe, root.target, root.node, null, index); break; } index++;
+                    if (s.id.equals(original.primaryOutput())) { root = new Route(root.recipe, root.target, root.node, index); break; } index++;
                 }
             }
         }
@@ -209,12 +176,15 @@ public final class BookmarkTreeActions {
             if (update) verify(context);
             var c = BookmarkWorkspace.collection();
             var prospective = BookmarkTreeData.stage(c, tree, update ? context.group : null, update ? context.recipe : null);
+            if (!update) BookmarkSidebar.placeAdded(prospective, prospective.recipes.stream()
+                    .filter(r -> c.recipes.stream().noneMatch(old -> old.id().equals(r.id()))).toList());
             var collections = new ArrayList<>(BookmarkWorkspace.document().collections()); collections.set(collections.indexOf(c), prospective);
             var document = new BookmarkCodec.Document(collections, BookmarkWorkspace.document().active());
             var json = new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(BookmarkCodec.encode(document));
             if (json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > BookmarkTreeData.MAX_BYTES) throw new IllegalArgumentException("Tree would exceed the save-size limit");
             BookmarkCodec.decode(com.google.gson.JsonParser.parseString(json).getAsJsonObject());
             c.recipes.clear(); c.recipes.addAll(prospective.recipes); c.groups.clear(); c.groups.addAll(prospective.groups);
+            c.pageSections.clear(); c.pageSections.putAll(prospective.pageSections);
             BookmarkWorkspace.changed();
             if (context != null) {
                 var installed = update && context.group != null ? c.groupById(context.group) : c.groups.get(c.groups.size() - 1);
@@ -223,15 +193,6 @@ public final class BookmarkTreeActions {
             }
             BookmarkWorkspace.message((update ? "Updated" : "Imported") + " recipe tree: " + tree.recipes().size() + " recipes");
         } catch (RuntimeException | LinkageError failure) { BookmarkWorkspace.message("Tree was not saved: " + failure.getMessage()); }
-    }
-
-    private static BookmarkCollection.Recipe copy(BookmarkCollection.Recipe old, UUID selectedOutput) {
-        var slots = new ArrayList<BookmarkSlot>(); UUID primary = null;
-        for (var s : old.icons()) {
-            var next = new BookmarkSlot(UUID.randomUUID(), s.role, s.alternatives, s.selected()); slots.add(next);
-            if (s.id.equals(selectedOutput)) primary = next.id;
-        }
-        return new BookmarkCollection.Recipe(UUID.randomUUID(), old.isRecipe(), old.recipeKey(), slots, old.batches(), primary);
     }
 
     private static void run(java.util.function.Supplier<BookmarkTreePlanner.Plan> action) {
@@ -243,12 +204,15 @@ public final class BookmarkTreeActions {
             prospective.mode = collection.mode; prospective.chain = collection.chain; prospective.collapsed = collection.collapsed;
             prospective.recipes.addAll(collection.recipes); prospective.recipes.addAll(plan.recipes());
             prospective.groups.addAll(collection.groups); prospective.groups.add(group);
+            prospective.pageSections.putAll(collection.pageSections);
+            BookmarkSidebar.placeAdded(prospective, plan.recipes());
             var collections = new ArrayList<>(BookmarkWorkspace.document().collections());
             collections.set(collections.indexOf(collection), prospective);
             var json = BookmarkCodec.encode(new BookmarkCodec.Document(collections, BookmarkWorkspace.document().active()));
             if (new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(json).getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 16 * 1024 * 1024)
                 throw new IllegalArgumentException("Imported tree would exceed the 16 MiB save limit");
-            collection.recipes.addAll(plan.recipes()); collection.groups.add(group);
+            collection.recipes.clear(); collection.recipes.addAll(prospective.recipes); collection.groups.add(group);
+            collection.pageSections.clear(); collection.pageSections.putAll(prospective.pageSections);
             BookmarkWorkspace.changed();
             try { BookmarkDock.show(); }
             catch (RuntimeException | LinkageError uiFailure) { com.mojang.logging.LogUtils.getLogger().warn("Tree saved but bookmark page could not be shown", uiFailure); }
@@ -265,28 +229,16 @@ public final class BookmarkTreeActions {
     private static final class Routes implements BookmarkTreePlanner.Source<Route> {
         final MaterialTree tree;
         final Map<Route, BookmarkCollection.Recipe> captures = new IdentityHashMap<>();
-        final Map<String, EmiRecipe> resolved = new HashMap<>();
         final long deadline = System.nanoTime() + 3_000_000_000L;
-        Routes(MaterialTree tree) { this.tree = tree; }
-        void checkTime() { if (System.nanoTime() > deadline) throw new IllegalArgumentException("Tree expansion took too long; set more EMI defaults"); }
-        EmiRecipe resolve(EmiIngredient ingredient) {
-            return resolve(ingredient, 0);
-        }
-        EmiRecipe resolve(EmiIngredient ingredient, int hops) {
-            checkTime();
-            if (hops > 32) throw new IllegalArgumentException("Looping EMI ingredient resolution");
-            if (ingredient == null || ingredient.isEmpty()) return null;
-            var recipe = tree == null ? BookmarkRecipeDefaults.preferred(ingredient) : tree.getRecipe(ingredient);
-            if (recipe instanceof EmiResolutionRecipe resolution) return resolve(resolution.stack, hops + 1);
-            return recipe;
-        }
+        Routes(MaterialTree tree) { this.tree = Objects.requireNonNull(tree); }
+        void checkTime() { if (System.nanoTime() > deadline) throw new IllegalArgumentException("Reading the EMI tree took too long; simplify the tree"); }
         Route route(MaterialNode node) {
             int hops = 0;
             while (node != null && node.recipe instanceof EmiResolutionRecipe) {
                 if (++hops > 32) throw new IllegalArgumentException("Looping EMI ingredient resolution");
                 node = node.children == null || node.children.isEmpty() ? null : node.children.get(0);
             }
-            return node == null || node.recipe == null ? null : new Route(node.recipe, node.ingredient, node, null);
+            return node == null || node.recipe == null ? null : new Route(node.recipe, node.ingredient, node);
         }
         @Override public Object key(Route route) {
             var record = capture(route); var key = new ArrayList<Object>();
@@ -298,7 +250,6 @@ public final class BookmarkTreeActions {
         @Override public BookmarkCollection.Recipe capture(Route route) {
             checkTime();
             return captures.computeIfAbsent(route, r -> {
-                if (r.saved != null) return r.saved;
                 int primary = r.primaryHint >= 0 ? r.primaryHint : BookmarkCapture.outputIndex(r.recipe, r.target);
                 var outputs = r.recipe.getOutputs().stream().filter(s -> !s.isEmpty()).toList();
                 for (int i = 0; primary < 0 && i < outputs.size(); i++) {
@@ -311,14 +262,11 @@ public final class BookmarkTreeActions {
                 int index = 0;
                 for (var slot : record.icons()) if (slot.role == BookmarkSlot.Role.INPUT) {
                     var input = inputs.get(index++);
-                    EmiRecipe choice = tree == null ? BookmarkRecipeDefaults.manual(input) : tree.getRecipe(input);
-                    if (choice == null && tree == null) choice = BookmarkRecipeDefaults.preferred(input);
+                    EmiRecipe choice = tree.getRecipe(input);
                     if (choice instanceof EmiResolutionRecipe resolution) {
                         if (!select(slot, resolution.stack)) throw new IllegalArgumentException("EMI selected an ingredient outside its accepted alternatives");
                     } else if (input.getEmiStacks().size() > 1) {
-                        boolean selected = choice != null && choice.getOutputs().stream().anyMatch(out -> select(slot, out));
-                        if (!selected && tree == null) for (var stack : input.getEmiStacks())
-                            if (BookmarkRecipeDefaults.manual(stack) != null) { select(slot, stack); break; }
+                        if (choice != null) choice.getOutputs().stream().anyMatch(out -> select(slot, out));
                     }
                 }
                 return record;
@@ -340,11 +288,6 @@ public final class BookmarkTreeActions {
                 if (route.node.children != null) for (var node : route.node.children) {
                     var child = route(node); if (child != null) children.add(child);
                 }
-            } else for (var slot : capture(route).icons()) if (slot.role == BookmarkSlot.Role.INPUT) {
-                var ingredient = BookmarkCapture.ingredient(slot, 1); String key = slot.variant().serialized();
-                if (!resolved.containsKey(key)) resolved.put(key, resolve(ingredient));
-                var recipe = resolved.get(key);
-                if (recipe != null) children.add(new Route(recipe, ingredient, null, null));
             }
             return children;
         }

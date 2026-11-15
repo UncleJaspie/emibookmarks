@@ -46,7 +46,16 @@ public final class BookmarkChain {
         return new Resource(object, variant.unit());
     }
     public static Result calculate(List<BookmarkCollection.Recipe> records) {
-        try { return solve(records); }
+        return calculate(records, null);
+    }
+    /** Transactional stock allocation: unsupported scopes leave the supplied budget untouched. */
+    public static Result calculate(List<BookmarkCollection.Recipe> records, Map<Resource, Long> stock) {
+        var budget = stock == null ? null : new HashMap<>(stock);
+        try {
+            var result = solve(records, budget);
+            if (stock != null) { stock.clear(); stock.putAll(budget); }
+            return result;
+        }
         catch (Unsupported e) { return failed(e.getMessage()); }
         catch (ArithmeticException e) { return failed("Chain quantities exceed the supported integer range"); }
         catch (RuntimeException e) { return failed("Recipe snapshot cannot be calculated safely"); }
@@ -70,7 +79,7 @@ public final class BookmarkChain {
         var key = resource(new BookmarkSlot.Variant(value.toString(), amount, 1, v.label(), unit));
         return new Return(key, key.identity().getAsJsonObject().get("id").getAsString(), amount);
     }
-    private static Result solve(List<BookmarkCollection.Recipe> records) {
+    private static Result solve(List<BookmarkCollection.Recipe> records, Map<Resource, Long> stock) {
         Map<UUID, Resource> keys = new HashMap<>(); Map<Resource, String> labels = new LinkedHashMap<>();
         Map<Resource, BookmarkCollection.Recipe> producer = new HashMap<>();
         Map<UUID, Map<Resource, BigDecimal>> yields = new LinkedHashMap<>();
@@ -111,6 +120,8 @@ public final class BookmarkChain {
                 throw new Unsupported("Repeated chance output needs pooled display rounding: " + slot.variant().label());
         }
         var chanceResources = uncertain.stream().map(keys::get).collect(java.util.stream.Collectors.toSet());
+        if (stock != null && (!uncertain.isEmpty() || !expectedSlots.isEmpty() || !returns.isEmpty()))
+            throw new Unsupported("Output-aware stock tracking requires deterministic outputs without returned containers");
         for (var r : records) for (var slot : r.icons())
             if ((slot.role == BookmarkSlot.Role.INPUT || slot.role == BookmarkSlot.Role.CATALYST || slot.role == BookmarkSlot.Role.ITEM) &&
                     chanceResources.contains(keys.get(slot.id)) && !producer.containsKey(keys.get(slot.id)))
@@ -140,10 +151,10 @@ public final class BookmarkChain {
             if (!r.isRecipe()) { var slot = r.icons().get(0); add(goals, keys.get(slot.id), slot.amount(r.batches())); targets.add(r.id()); continue; }
             var primary = r.icons().stream().filter(s -> s.id.equals(r.primaryOutput())).findFirst().orElseThrow();
             long requests = linked.contains(keys.get(primary.id)) ? r.batches() - 1 : r.batches();
-            if (!linked.contains(keys.get(primary.id))) minimumCrafts.put(r.id(), r.batches());
+            if (stock == null && !linked.contains(keys.get(primary.id))) minimumCrafts.put(r.id(), r.batches());
             if (requests > 0) {
                 long yield = primary.variant().amount();
-                if (linked.contains(keys.get(primary.id))) {
+                if (stock != null || linked.contains(keys.get(primary.id))) {
                     yield = 0;
                     for (var slot : r.icons()) if (slot.role == BookmarkSlot.Role.OUTPUT && keys.get(slot.id).equals(keys.get(primary.id))) yield = Math.addExact(yield, slot.variant().amount());
                 }
@@ -152,9 +163,15 @@ public final class BookmarkChain {
         }
         demand.putAll(goals);
         Map<UUID, Long> batches = new LinkedHashMap<>(), amounts = new HashMap<>();
+        Map<Resource, Long> credit = new HashMap<>();
         for (var id : order) {
             long crafts = minimumCrafts.getOrDefault(id, 0L);
-            for (var output : yields.get(id).entrySet()) crafts = Math.max(crafts, ceil(total(demand, tools, output.getKey()), output.getValue()));
+            for (var output : yields.get(id).entrySet()) {
+                var key = output.getKey();
+                long needed = total(demand, tools, key);
+                if (stock != null) credit.put(key, take(stock, key, needed));
+                crafts = Math.max(crafts, ceil(needed - credit.getOrDefault(key, 0L), output.getValue()));
+            }
             batches.put(id, crafts);
             for (var slot : recipes.get(id).icons()) {
                 long amount = crafts == 0 ? 0 : (slot.role == BookmarkSlot.Role.CATALYST || reusable.contains(slot.id)) ? slot.variant().amount() : Math.multiplyExact(crafts, slot.variant().amount());
@@ -169,9 +186,25 @@ public final class BookmarkChain {
             }
         }
         for (var r : records) if (!r.isRecipe()) { batches.put(r.id(), r.batches()); amounts.put(r.icons().get(0).id, r.icons().get(0).amount(r.batches())); }
+        if (stock != null) {
+            for (var key : labels.keySet()) if (!credit.containsKey(key)) credit.put(key, take(stock, key, total(demand, tools, key)));
+            var consumedCredit = new HashMap<>(credit);
+            // Demand is pooled first; allocate each physical stock item once, in saved record order.
+            for (var r : records) for (var slot : r.icons()) {
+                var key = keys.get(slot.id);
+                if (slot.role == BookmarkSlot.Role.INPUT && !reusable.contains(slot.id) || slot.role == BookmarkSlot.Role.ITEM) {
+                    long amount = amounts.get(slot.id), used = Math.min(amount, consumedCredit.getOrDefault(key, 0L));
+                    amounts.put(slot.id, amount - used); consumedCredit.put(key, consumedCredit.getOrDefault(key, 0L) - used);
+                }
+            }
+            for (var r : records) for (var slot : r.icons()) if (slot.role == BookmarkSlot.Role.CATALYST || reusable.contains(slot.id)) {
+                long amount = amounts.get(slot.id);
+                amounts.put(slot.id, Math.max(0, amount - consumedCredit.getOrDefault(keys.get(slot.id), 0L)));
+            }
+        }
         Map<Resource, Long> base = new LinkedHashMap<>(), left = new LinkedHashMap<>();
         for (var key : labels.keySet()) {
-            long needed = total(demand, tools, key), made = produced.getOrDefault(key, 0L);
+            long needed = Math.max(0, total(demand, tools, key) - credit.getOrDefault(key, 0L)), made = produced.getOrDefault(key, 0L);
             if (needed > made) base.put(key, needed - made);
             if (made > needed) left.put(key, made - needed);
         }
@@ -187,5 +220,9 @@ public final class BookmarkChain {
     }
     private static List<Material> materials(Map<Resource, Long> amounts, Map<Resource, String> labels) {
         return amounts.entrySet().stream().filter(e -> e.getValue() > 0).map(e -> new Material(e.getKey(), labels.get(e.getKey()), e.getValue())).toList();
+    }
+    private static long take(Map<Resource, Long> stock, Resource key, long needed) {
+        long owned = stock.getOrDefault(key, 0L), used = Math.min(owned, needed);
+        stock.put(key, owned - used); return used;
     }
 }

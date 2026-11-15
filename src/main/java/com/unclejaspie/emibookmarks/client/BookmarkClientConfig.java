@@ -14,8 +14,9 @@ import net.minecraftforge.fml.event.lifecycle.FMLConstructModEvent;
 public final class BookmarkClientConfig {
     public static final ForgeConfigSpec SPEC;
     public enum Background { EMI, CUSTOM }
-    public static final ForgeConfigSpec.BooleanValue COMBINE_INPUTS, MACHINE_BADGE, ROLE_ACCENTS, BATCH_LABEL, AUTO_TREE, TREE_WORLD, TREE_BLUR;
+    public static final ForgeConfigSpec.BooleanValue COMBINE_INPUTS, MACHINE_BADGE, ROLE_ACCENTS, BATCH_LABEL, TREE_WORLD, TREE_BLUR, SHIFT_MATERIAL_HIGHLIGHTS;
     public static final ForgeConfigSpec.EnumValue<Background> BACKGROUND;
+    public static final ForgeConfigSpec.BooleanValue OUTPUT_AWARE_STOCK;
     public static final ForgeConfigSpec.DoubleValue SIDEBAR_OPACITY, TREE_OPACITY;
 
     static {
@@ -24,8 +25,11 @@ public final class BookmarkClientConfig {
                 .define("combineIdenticalIngredients", true);
         MACHINE_BADGE = builder.define("machineBadge", true);
         ROLE_ACCENTS = builder.define("roleUnderlines", true);
+        SHIFT_MATERIAL_HIGHLIGHTS = builder.comment("Show two-color chain material inspection while holding Tab. Legacy key name retained to preserve existing preferences. Independent of Shift inventory tracking.")
+                .define("shiftMaterialHighlights", true);
+        OUTPUT_AWARE_STOCK = builder.comment("While holding Shift, allocate carried output items and recalculate remaining recipe work. Unsupported scopes keep original quantities.")
+                .define("outputAwareInventoryTracking", true);
         BATCH_LABEL = builder.define("leadingBatchMultiplier", true);
-        AUTO_TREE = builder.comment("Opt-in registry-wide expansion. Off opens an editable tree from saved routes instead.").define("automaticTreeExpansion", false);
         BACKGROUND = builder.defineEnum("sidebarBackground", Background.EMI);
         SIDEBAR_OPACITY = builder.defineInRange("customSidebarOpacity", 0.88, 0, 1);
         TREE_WORLD = builder.define("treeWorldBackground", true);

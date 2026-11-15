@@ -25,6 +25,7 @@ public final class BookmarkLayout {
     public final List<Cell> cells;
     public final List<Row> rows;
     public final int page, pages, columns;
+    public final java.util.Map<UUID, Integer> recipePages;
     public final java.util.Map<UUID, BookmarkChain.Result> calculations;
     private final BookmarkCollection collection;
 
@@ -46,11 +47,19 @@ public final class BookmarkLayout {
         treeImport = new Rect(x + width - 32, footer.y(), 16, FOOTER);
         options = new Rect(x + width - 16, footer.y(), 16, FOOTER);
         List<LogicalCell> packed = new ArrayList<>();
+        var placements = new java.util.LinkedHashMap<UUID, Integer>();
+        int previousSection = -1;
         UUID previousGroup = null;
         for (int i = 0; i < collection.recipes.size(); i++) {
             var recipe = collection.recipes.get(i);
             var group = collection.groupOf(recipe.id());
             UUID groupId = group == null ? null : group.id;
+            int section = collection.pageSections.getOrDefault(group == null ? recipe.id() : group.members.get(0), 0);
+            if (previousSection != -1 && section != previousSection) {
+                while (packed.size() % (columns * visibleRows) != 0)
+                    packed.add(new LogicalCell(null, -1, -1, null, List.of(), 0));
+            }
+            previousSection = section;
             boolean boundary = !Objects.equals(previousGroup, groupId);
             var mode = group == null ? collection.mode : group.mode;
             boolean collapsed = group == null ? collection.collapsed : group.collapsed;
@@ -58,6 +67,7 @@ public final class BookmarkLayout {
             boolean scopeRepresentatives = collapsed || (chain && mode == BookmarkCollection.Mode.COMPACT);
             boolean representatives = scopeRepresentatives || recipe.collapsed();
             if (boundary || (!scopeRepresentatives && mode == BookmarkCollection.Mode.TODO)) pad(packed, columns);
+            placements.put(recipe.id(), packed.size() / (columns * visibleRows));
             var projected = BookmarkProjection.slots(recipe, combine, calculations.get(recipe.id()));
             int count = representatives ? 1 : projected.size();
             for (int icon = 0; icon < count; icon++) {
@@ -68,7 +78,8 @@ public final class BookmarkLayout {
         }
         pad(packed, columns);
         int totalRows = packed.size() / columns;
-        pages = Math.max(1, (totalRows + visibleRows - 1) / visibleRows);
+        pages = packed.isEmpty() ? 1 : (totalRows + visibleRows - 1) / visibleRows + 1;
+        recipePages = java.util.Map.copyOf(placements);
         page = Math.max(0, Math.min(requestedPage, pages - 1));
         List<Cell> cells = new ArrayList<>(); List<Row> rows = new ArrayList<>();
         for (int row = 0; row < visibleRows; row++) {
@@ -78,15 +89,43 @@ public final class BookmarkLayout {
             UUID rowGroup = packed.get(offset).group;
             for (int col = 0; col < columns; col++) {
                 var cell = packed.get(offset + col);
+                if (cell.recipe == null) continue;
                 first = Math.min(first, cell.index); last = Math.max(last, cell.index);
                 cells.add(new Cell(new Rect(x + GUTTER + col * CELL, y + HEADER + row * ROW, CELL, ROW),
                         cell.recipe, cell.index, cell.icon, cell.group, cell.sources, cell.amount));
             }
-            rows.add(new Row(new Rect(x, y + HEADER + row * ROW, GUTTER, ROW), first, last, rowGroup));
+            if (last >= 0) rows.add(new Row(new Rect(x, y + HEADER + row * ROW, GUTTER, ROW), first, last, rowGroup));
         }
         this.cells = List.copyOf(cells); this.rows = List.copyOf(rows);
     }
     private record LogicalCell(UUID recipe, int index, int icon, UUID group, List<Integer> sources, long amount) {}
+    /** Compact saved section labels without turning automatic recipe continuations into new breaks. */
+    public void rememberPages(BookmarkCollection target) {
+        var old = new java.util.HashMap<>(target.pageSections);
+        target.pageSections.clear();
+        int section = -1, previous = -1;
+        for (var r : target.recipes) {
+            var group = target.groupOf(r.id());
+            var anchor = group == null ? r.id() : group.members.get(0);
+            int original = old.getOrDefault(anchor, 0);
+            if (original != previous) { section++; previous = original; }
+            target.pageSections.put(r.id(), section);
+        }
+    }
+    public int destinationSection(BookmarkCollection target) {
+        var first = cells.stream().filter(c -> !c.blank()).findFirst().orElse(null);
+        return first == null ? target.pageSections.values().stream().mapToInt(Integer::intValue).max().orElse(-1) + 1
+                : target.pageSections.getOrDefault(first.recipe(), 0);
+    }
+    /** Apply capture/import destination using geometry captured before adding the records. */
+    public void placeAdded(BookmarkCollection target, List<BookmarkCollection.Recipe> added) {
+        target.recipes.removeAll(added);
+        rememberPages(target);
+        int section = destinationSection(target), at = 0;
+        while (at < target.recipes.size() && target.pageSections.getOrDefault(target.recipes.get(at).id(), 0) <= section) at++;
+        target.recipes.addAll(at, added);
+        for (var r : added) target.pageSections.put(r.id(), section);
+    }
     private static void pad(List<LogicalCell> cells, int columns) {
         if (cells.isEmpty()) return;
         var owner = cells.get(cells.size() - 1);

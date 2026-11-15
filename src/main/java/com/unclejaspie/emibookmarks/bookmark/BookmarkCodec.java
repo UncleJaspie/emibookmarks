@@ -5,7 +5,7 @@ import java.util.*;
 
 /** Versioned snapshots retain opaque serializer data even when a recipe/mod is unavailable. */
 public final class BookmarkCodec {
-    public static final int VERSION = 5;
+    public static final int VERSION = 6;
     // A merged legacy document may contain 64 old lists of up to 10,000 records each. File IO remains capped at 16 MiB.
     private static final int MAX_MERGED_RECORDS = 640_000;
     public record Document(List<BookmarkCollection> collections, UUID active) {
@@ -35,6 +35,7 @@ public final class BookmarkCodec {
         }
         for (var source : ordered) {
             merged.recipes.addAll(source.recipes);
+            merged.pageSections.putAll(source.pageSections);
             for (var old : source.groups) {
                 var copy = new BookmarkCollection.Group(old.id, old.members);
                 copy.mode = old.mode; copy.chain = old.chain; copy.collapsed = old.collapsed;
@@ -74,6 +75,7 @@ public final class BookmarkCodec {
                 recipe.addProperty("batches", r.batches()); var slots = new JsonArray();
                 recipe.addProperty("counted", r.counted());
                 recipe.addProperty("collapsed", r.collapsed());
+                recipe.addProperty("pageSection", c.pageSections.getOrDefault(r.id(), 0));
                 for (var s : r.icons()) {
                     var slot = new JsonObject(); slot.addProperty("id", s.id.toString());
                     slot.addProperty("role", s.role.name()); slot.addProperty("selected", s.selected());
@@ -155,6 +157,11 @@ public final class BookmarkCodec {
                 record.counted(version < 3 || r.get("counted").getAsBoolean());
                 if (version >= 4) record.collapsed(r.get("collapsed").getAsBoolean());
                 c.recipes.add(record);
+                if (version >= 6 && r.has("pageSection")) {
+                    int section = r.get("pageSection").getAsInt();
+                    if (section < 0 || section > MAX_MERGED_RECORDS) throw new IllegalArgumentException("Invalid page section");
+                    c.pageSections.put(record.id(), section);
+                }
             }
             Set<UUID> assigned = new HashSet<>();
             for (var gElement : array(json, "groups", MAX_MERGED_RECORDS)) {

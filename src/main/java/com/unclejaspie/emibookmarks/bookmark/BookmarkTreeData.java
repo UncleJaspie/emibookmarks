@@ -120,6 +120,10 @@ public final class BookmarkTreeData {
             if (oldGroup != null) { inserted.group.mode = oldGroup.mode; inserted.group.collapsed = oldGroup.collapsed; inserted.group.chain &= oldGroup.chain; }
         }
         var result = new BookmarkCollection(source.id, source.name); result.mode = source.mode; result.chain = source.chain; result.collapsed = source.collapsed;
+        result.pageSections.putAll(source.pageSections);
+        int destinationPage = source.recipes.stream().filter(r -> removed.contains(r.id())).findFirst()
+                .map(r -> source.pageSections.getOrDefault(r.id(), 0)).orElse(0);
+        for (var r : inserted.recipes) result.pageSections.put(r.id(), destinationPage);
         boolean added = false;
         for (var r : source.recipes) {
             if (removed.contains(r.id())) { if (!added) { result.recipes.addAll(inserted.recipes); added = true; } }

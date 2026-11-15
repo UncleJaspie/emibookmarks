@@ -41,6 +41,7 @@ public final class BookmarkSidebar {
     private static BookmarkLayout.Drop lastDrop;
     public static BookmarkCollection displayCollection() { return REORDER.view(BookmarkWorkspace.collection()); }
     private static int page;
+    private static java.util.Map<UUID, String> stockIssues = java.util.Map.of();
     private static Screen owner;
     private static UUID pressedRecipe, pressedSlot;
     private static int pressedButton;
@@ -63,6 +64,11 @@ public final class BookmarkSidebar {
         return hit != null || (!GESTURES.active() && pressedRecipe == null && pressedGroup == null) ? hit : layout(screen);
     }
     public static int page() { return page; }
+    public static void placeAdded(BookmarkCollection target, java.util.List<BookmarkCollection.Recipe> added) {
+        var screen = Minecraft.getInstance().screen;
+        var l = screen == null ? null : BookmarkDock.layout(screen, page);
+        if (l != null) l.placeAdded(target, added);
+    }
     private static void cancel() {
         GESTURES.cancel(); REORDER.cancel(); DRAG_PAGING.reset(); reorderArmed = false; foldArmed = false; fillArmed = false;
         pressedRecipe = null; pressedSlot = null; pressedGroup = null; lastDrop = null; dropAllowed = false;
@@ -100,6 +106,9 @@ public final class BookmarkSidebar {
         var inputClient = Minecraft.getInstance();
         int inputX = (int) (inputClient.mouseHandler.xpos() * screen.width / inputClient.getWindow().getScreenWidth());
         int inputY = (int) (inputClient.mouseHandler.ypos() * screen.height / inputClient.getWindow().getScreenHeight());
+        if (inputClient.player != null && event.getKeyCode() == org.lwjgl.glfw.GLFW.GLFW_KEY_TAB && BookmarkDock.layoutAt(screen, page, inputX, inputY) != null) {
+            event.setCanceled(true); return; // Inspecting the sidebar must not cycle keyboard focus.
+        }
         boolean recipeItemCapture = Screen.hasControlDown() && !Screen.hasShiftDown() && !BookmarkRecipeContext.ingredientAt(screen, inputX, inputY).isEmpty();
         if (Minecraft.getInstance().player == null || (EmiApi.isSearchFocused() && !recipeItemCapture) ||
                 (screen.getFocused() instanceof EditBox edit && edit.canConsumeInput())) return;
@@ -174,7 +183,9 @@ public final class BookmarkSidebar {
                 BookmarkWorkspace.message("Open the chosen EMI recipe before using Shift+" + bookmarkKey());
                 return;
             } else record = BookmarkCapture.item(captureIngredient, Screen.hasControlDown());
+            var insertion = layout(Minecraft.getInstance().screen);
             boolean added = BookmarkIdentity.toggle(collection(), record);
+            if (added && insertion != null) insertion.placeAdded(collection(), java.util.List.of(record));
             BookmarkDock.show(); BookmarkWorkspace.changed();
             BookmarkWorkspace.message(added ? "Item bookmarked" : "Item bookmark removed");
         } catch (RuntimeException | LinkageError e) {
@@ -192,6 +203,7 @@ public final class BookmarkSidebar {
         if (!editing()) return;
         try {
         if (primary < 0) primary = BookmarkCapture.outputIndex(recipe, hovered);
+        if (primary < 0) primary = BookmarkRecipeContext.lookupOutput(Minecraft.getInstance().screen, recipe);
         int count = (int) recipe.getOutputs().stream().filter(s -> !s.isEmpty()).count();
         if (primary < 0 && count == 1) primary = 0;
         if (primary < 0 && count > 1) {
@@ -199,7 +211,9 @@ public final class BookmarkSidebar {
         }
             var record = BookmarkCapture.recipe(recipe, primary, hovered);
             record.counted(counted);
+            var insertion = layout(Minecraft.getInstance().screen);
             boolean added = BookmarkIdentity.toggle(collection(), record);
+            if (added && insertion != null) insertion.placeAdded(collection(), java.util.List.of(record));
             BookmarkDock.show(); BookmarkWorkspace.changed();
             BookmarkWorkspace.message(added ? "Recipe bookmarked" : "Recipe bookmark removed");
         } catch (RuntimeException | LinkageError e) {
@@ -274,6 +288,7 @@ public final class BookmarkSidebar {
                 if (!REORDER.active()) {
                     if (pressedGroup != null) REORDER.startGroup(BookmarkWorkspace.collection(), pressedGroup);
                     else REORDER.start(BookmarkWorkspace.collection(), pressedRecipe);
+                    l.rememberPages(REORDER.view(BookmarkWorkspace.collection()));
                 }
                 updateReorder(l, event.getMouseX(), event.getMouseY());
             }
@@ -321,6 +336,9 @@ public final class BookmarkSidebar {
         var cell = l.cell(x, y);
         if (l.body.contains(x, y) && cell != null && REORDER.members().contains(cell.recipe())) { dropAllowed = true; return; }
         var target = l.drop(x, y, REORDER.members(), REORDER.atomicTargets(), lastDrop);
+        if (target == null && l.body.contains(x, y) && l.cells.stream().noneMatch(c -> !c.blank())) {
+            dropAllowed = REORDER.insertPage(l); lastDrop = null; return;
+        }
         dropAllowed = target != null && REORDER.insert(target.target(), target.after());
         if (dropAllowed) lastDrop = target;
     }
@@ -328,7 +346,10 @@ public final class BookmarkSidebar {
         var ingredient = BookmarkCapture.ingredient(slot, record.batches());
         if (button == 0 && record.isRecipe() && slot.role == BookmarkSlot.Role.OUTPUT) {
             var recipe = BookmarkCapture.resolve(record);
-            if (recipe != null) EmiApi.displayRecipe(recipe);
+            if (recipe != null) {
+                EmiApi.displayRecipe(recipe);
+                BookmarkRecipeContext.openedFor(Minecraft.getInstance().screen, ingredient);
+            }
             else BookmarkWorkspace.message("The saved recipe is unavailable. Its bookmark snapshot has been retained.");
         } else if (!ingredient.isEmpty()) {
             if (button == 1) EmiApi.displayUses(ingredient); else EmiApi.displayRecipes(ingredient);
@@ -369,6 +390,11 @@ public final class BookmarkSidebar {
                 if (calculation == null || !calculation.valid() || calculation.targets().contains(record.id())) record.adjustBatches(direction, step);
     }
     public static void renderDocked(BookmarkLayout l, GuiGraphics g, Screen screen, int mouseX, int mouseY, float partialTick) {
+        renderDocked(l, g, screen, mouseX, mouseY, partialTick, Screen.hasShiftDown(),
+                InputConstants.isKeyDown(Minecraft.getInstance().getWindow().getWindow(), org.lwjgl.glfw.GLFW.GLFW_KEY_TAB), Screen.hasAltDown());
+    }
+    /** Snapshot Shift/Tab/Alt once per frame so quantities, colors and contextual help agree. */
+    private static void renderDocked(BookmarkLayout l, GuiGraphics g, Screen screen, int mouseX, int mouseY, float partialTick, boolean shiftDown, boolean tabDown, boolean altDown) {
         if (owner != screen) { cancel(); owner = screen; }
         page = l.page; long now = System.currentTimeMillis();
         if (GESTURES.active() || REORDER.active()) {
@@ -399,8 +425,10 @@ public final class BookmarkSidebar {
         var inspection = l.cell(mouseX, mouseY);
         var inspectionRow = l.gutter(mouseX, mouseY);
         UUID inspectionGroup = inspection == null ? inspectionRow == null ? null : inspectionRow.group() : inspection.group();
-        boolean inspectMaterials = Screen.hasShiftDown() && (inspection != null || inspectionRow != null) && !REORDER.active() && !GESTURES.active();
-        var inventoryView = Screen.hasShiftDown() && !REORDER.active() && !GESTURES.active() ? new BookmarkInventoryView() : null;
+        boolean inspectMaterials = BookmarkClientConfig.SHIFT_MATERIAL_HIGHLIGHTS.get() && tabDown && (inspection != null || inspectionRow != null) && !REORDER.active() && !GESTURES.active();
+        var inventoryView = shiftDown && !REORDER.active() && !GESTURES.active() ? new BookmarkInventoryView() : null;
+        var stockPlan = inventoryView != null && BookmarkClientConfig.OUTPUT_AWARE_STOCK.get() ? inventoryView.plan(collection(), l.calculations) : null;
+        stockIssues = stockPlan == null ? java.util.Map.of() : stockPlan.issues();
         var inventoryAmounts = new HashMap<BookmarkLayout.Cell, BookmarkInventoryView.Amount>();
         for (var cell : l.cells) {
             if (customBackground && BookmarkClientConfig.SIDEBAR_OPACITY.get() > 0) fill(g, cell.bounds(),
@@ -410,18 +438,16 @@ public final class BookmarkSidebar {
             if (cell.blank()) continue;
             var record = collection().recipes.get(cell.recipeIndex()); var slot = record.icons().get(cell.icon());
             var calculation = l.calculations.get(record.id());
-            if (inspectMaterials && Objects.equals(inspectionGroup, cell.group()) && calculation != null && calculation.valid()) {
-                int color = switch (calculation.kinds().get(slot.id)) {
-                    case BASE_INPUT -> 0x6055DD77;
-                    case RESULT -> 0x6044DDEE;
-                    case REMAINDER -> 0x60BB66DD;
-                    case CHANCE -> 0x60DD9955;
-                    case INTERMEDIATE -> 0;
-                };
-                if (color != 0) fill(g, cell.bounds(), color);
-            }
             var ingredient = ingredient(record, cell);
             var inventoryAmount = inventoryView == null ? null : inventoryView.amount(slot, ingredient, cell.amount());
+            if (stockPlan != null) {
+                long remaining = cell.amount();
+                if (!stockPlan.issues().containsKey(record.id())) {
+                    remaining = 0;
+                    for (int source : cell.sources()) remaining = Math.addExact(remaining, stockPlan.amounts().get(record.icons().get(source).id));
+                }
+                inventoryAmount = new BookmarkInventoryView.Amount(cell.amount(), remaining);
+            }
             if (inventoryAmount != null) inventoryAmounts.put(cell, inventoryAmount);
             if (ingredient.isEmpty()) g.drawString(font, "?", cell.bounds().x() + 5, cell.bounds().y() + 5, 0xFF9999);
             else if (inventoryAmount != null && inventoryAmount.covered()) {
@@ -454,20 +480,17 @@ public final class BookmarkSidebar {
             var calculation = l.calculations.get(record.id());
             String prefix = calculation != null && calculation.valid() && calculation.kinds().get(slot.id) == BookmarkChain.Kind.CHANCE ? "\u2264" : calculation != null && calculation.valid() && calculation.expected() ? "~" : "";
             if (shownAmount == 0) prefix = "";
-            if (inspectMaterials && Objects.equals(inspectionGroup, cell.group()) && calculation != null && calculation.valid()) {
-                int color = switch (calculation.kinds().get(slot.id)) {
-                    case BASE_INPUT -> 0x55DD77;
-                    case RESULT -> 0x44DDEE;
-                    case REMAINDER -> 0xBB66DD;
-                    case CHANCE -> 0xDD9955;
-                    case INTERMEDIATE -> 0;
-                };
+            if (inspectMaterials && shownAmount > 0 && Objects.equals(inspectionGroup, cell.group()) && calculation != null && calculation.valid()) {
+                int color = BookmarkMaterialHighlights.color(slot, calculation);
                 if (color != 0) {
-                    fill(g, cell.artwork(), 0x30000000 | color);
+                    var art = cell.artwork();
+                    for (var stripe : BookmarkMaterialHighlights.STRIPES)
+                        g.fill(art.x()+stripe.x(), art.y()+stripe.y(), art.x()+stripe.x()+stripe.width(), art.y()+stripe.y()+1, stripe.alpha()<<24 | color);
                     var r = cell.bounds();
-                    g.fill(r.x(), r.y(), r.x() + BookmarkLayout.CELL, r.y() + 1, 0xFF000000 | color);
-                    g.fill(r.x(), r.y(), r.x() + 1, r.y() + 16, 0xFF000000 | color);
-                    g.fill(r.x() + BookmarkLayout.CELL - 1, r.y(), r.x() + BookmarkLayout.CELL, r.y() + 16, 0xFF000000 | color);
+                    g.fill(r.x(), r.y(), r.x() + BookmarkLayout.CELL, r.y() + 1, 0xB0000000 | color);
+                    g.fill(r.x(), r.y(), r.x() + 1, r.y() + 16, 0xB0000000 | color);
+                    g.fill(r.x() + BookmarkLayout.CELL - 1, r.y(), r.x() + BookmarkLayout.CELL, r.y() + 16, 0xB0000000 | color);
+                    g.fill(r.x(), r.y()+16, r.x()+BookmarkLayout.CELL, r.y()+17, 0xB0000000 | color);
                 }
             }
             String quantityPrefix = prefix;
@@ -476,7 +499,7 @@ public final class BookmarkSidebar {
             boolean reduced = inventoryAmount != null && inventoryAmount.reduced();
             if (record.counted() || reduced) quantityLabel(g, quantity, cell.quantity(), reduced ? 0xFFFF00 : 0xFFFFFF);
             if (record.counted() && primary && BookmarkClientConfig.BATCH_LABEL.get())
-                halfSizeLabel(g, "\u00d7" + BookmarkQuantities.overlayNumber(displayBatches(l, record), BookmarkSlot.Unit.ITEM), cell.batch().x() * 2, cell.batch().y() * 2);
+                halfSizeLabel(g, "\u00d7" + BookmarkQuantities.overlayNumber(stockPlan == null ? displayBatches(l, record) : stockPlan.batches().getOrDefault(record.id(), displayBatches(l, record)), BookmarkSlot.Unit.ITEM), cell.batch().x() * 2, cell.batch().y() * 2);
             if (BookmarkClientConfig.ROLE_ACCENTS.get()) {
                 if (slot.role == BookmarkSlot.Role.OUTPUT) fill(g, cell.accent(), 0xFF719BC7);
                 else if (slot.role == BookmarkSlot.Role.INPUT) fill(g, cell.accent(), 0xFF75B786);
@@ -502,7 +525,7 @@ public final class BookmarkSidebar {
         double mx = mouseX, my = mouseY;
         if (REORDER.active()) {
             dragPreview(g, l, mouseX, mouseY, partialTick);
-        } else if (!GESTURES.active() && pressedRecipe == null && pressedGroup == null && l.bounds.contains(mx, my)) tooltip(g, l, (int) mx, (int) my);
+        } else if (!GESTURES.active() && pressedRecipe == null && pressedGroup == null && l.bounds.contains(mx, my)) tooltip(g, l, (int) mx, (int) my, altDown);
         g.pose().popPose();
     }
     private static void dragPreview(GuiGraphics g, BookmarkLayout l, int mouseX, int mouseY, float partialTick) {
@@ -548,7 +571,7 @@ public final class BookmarkSidebar {
         if (groupPreview || icons.size() > shown) halfSizeLabel(g, groupPreview ? icons.size() + (icons.size() == 1 ? " recipe" : " recipes") : "+" + (icons.size() - shown), x * 2, (y + height + 3) * 2);
         g.pose().popPose();
     }
-    private static void tooltip(GuiGraphics g, BookmarkLayout l, int x, int y) {
+    private static void tooltip(GuiGraphics g, BookmarkLayout l, int x, int y, boolean altDown) {
         var font = Minecraft.getInstance().font;
         if (l.treeImport.contains(x, y)) {
             g.renderTooltip(font, List.of(Component.literal("Import current EMI tree into a new group"),
@@ -560,9 +583,9 @@ public final class BookmarkSidebar {
         var gutter = l.gutter(x, y);
         boolean label = l.label.contains(x, y);
         if (gutter != null || label) {
-            if (!Screen.hasAltDown()) { g.renderTooltip(font, BookmarkHelp.hint(), x, y); return; }
+            if (!altDown) { g.renderTooltip(font, BookmarkHelp.hint(), x, y); return; }
             var group = gutter == null ? null : collection().groupById(gutter.group());
-            var lines = new ArrayList<Component>(); lines.add(BookmarkHelp.title());
+            var lines = new ArrayList<Component>(); BookmarkHelp.section(lines, label ? "Bookmark list" : "Recipe group");
             boolean enabled = group == null ? collection().chain : group.chain;
             if (group != null || label) {
                 var mode = group == null ? collection().mode : group.mode;
@@ -571,17 +594,26 @@ public final class BookmarkSidebar {
                 lines.add(BookmarkHelp.action("RMB", enabled ? "Disable chain calculation" : "Enable chain calculation"));
                 lines.add(BookmarkHelp.action("Alt + LMB", collapsed ? "Expand bracket" : "Collapse bracket"));
             }
+            lines.add(BookmarkHelp.action("Ctrl + Wheel", enabled ? "Change requested crafts" : "Change batches"));
+            BookmarkHelp.section(lines, "Arrange");
             if (!label) {
                 lines.add(BookmarkHelp.action("LMB drag", "Group whole recipes"));
                 lines.add(BookmarkHelp.action("RMB drag", "Exclude recipes"));
                 if (group != null) lines.add(BookmarkHelp.action("Shift + LMB drag", "Move whole group"));
             }
-            lines.add(BookmarkHelp.action("Ctrl + Wheel", enabled ? "Change requested crafts" : "Change batches"));
             lines.add(BookmarkHelp.action("Shift + " + bookmarkKey(), group == null ? "Remove ungrouped bookmarks" : "Remove whole group"));
+            BookmarkHelp.section(lines, "Inspect");
+            lines.add(BookmarkHelp.action("Shift", "Show inventory-aware quantities"));
             if (enabled) {
                 var calculation = BookmarkChains.scope(collection(), group == null ? null : group.id);
                 if (!calculation.valid()) lines.add(Component.literal("Chain unavailable: " + calculation.issue()).withStyle(net.minecraft.ChatFormatting.RED));
-                else if (calculation.expected()) lines.add(Component.literal("~ Expected yield; chance results are not guaranteed").withStyle(net.minecraft.ChatFormatting.GOLD));
+                else {
+                    if (BookmarkClientConfig.SHIFT_MATERIAL_HIGHLIGHTS.get()) {
+                        lines.add(BookmarkHelp.action("Tab", "Inspect chain materials"));
+                        lines.addAll(BookmarkHelp.materialLegendLines());
+                    }
+                    if (calculation.expected()) lines.add(Component.literal("~ Expected yield; chance results are not guaranteed").withStyle(net.minecraft.ChatFormatting.GOLD));
+                }
             }
             g.renderTooltip(font, lines, Optional.empty(), x, y); return;
         }
@@ -592,38 +624,45 @@ public final class BookmarkSidebar {
             var lines = new ArrayList<Component>();
             if (!ingredient.isEmpty() && !ingredient.getEmiStacks().isEmpty()) lines.addAll(ingredient.getEmiStacks().get(0).getTooltipText());
             else lines.add(Component.literal(slot.variant().label() + " (unavailable)"));
-            if (Screen.hasAltDown()) {
+            if (altDown) {
                 var group = collection().groupOf(record.id());
                 var calculation = l.calculations.get(record.id());
-                lines.add(BookmarkHelp.title());
+                BookmarkHelp.section(lines, "Browse");
                 lines.add(BookmarkHelp.action("LMB", record.isRecipe() && slot.role == BookmarkSlot.Role.OUTPUT ? "Open saved recipe" : "Show recipes"));
                 lines.add(BookmarkHelp.action("RMB", "Show uses"));
                 if (BookmarkRecipeFill.available(record, slot, ingredient))
                     lines.add(BookmarkHelp.action("Shift + LMB", "Fill crafting grid (as many as fit)"));
-                lines.add(BookmarkHelp.action("Shift", "Show inventory shortages; fade covered items"));
+                lines.add(BookmarkHelp.action(BookmarkKeys.TREE.getTranslatedKeyMessage().getString(), record.isRecipe() || group != null ? "Open saved recipe tree" : "Open recipe tree"));
+                BookmarkHelp.section(lines, "Edit");
                 if (BookmarkFolding.available(collection(), record, slot.id))
                     lines.add(BookmarkHelp.action("Alt + LMB", record.collapsed() ? "Unfold this recipe" : "Fold this recipe"));
-                lines.add(BookmarkHelp.action(bookmarkKey(), record.isRecipe() ? "Remove recipe" : "Remove item"));
-                lines.add(BookmarkHelp.action("Ctrl + Shift + C (in tree)", "Save as new recipe group"));
-                lines.add(BookmarkHelp.action(BookmarkKeys.TREE.getTranslatedKeyMessage().getString(), "Reopen saved recipe tree"));
+                lines.add(BookmarkHelp.action("Alt + " + bookmarkKey(), record.isRecipe() ? "Remove recipe" : "Remove item"));
                 lines.add(BookmarkHelp.action("Shift + " + bookmarkKey(), group == null ? "Remove ungrouped bookmarks" : "Remove group"));
                 lines.add(BookmarkHelp.action("Shift + LMB drag", group != null && group.members.size() == 1 ? "Move this bracket" : group != null ? "Reorder recipe in group" : "Move bookmark"));
-                lines.add(BookmarkHelp.action("Ctrl + Wheel", record.isRecipe() ? "Change requested crafts" : "Change quantity"));
-                lines.add(BookmarkHelp.action("Ctrl + Alt + Wheel", "Change in steps of 64"));
+                lines.add(BookmarkHelp.action("Ctrl + Wheel", record.isRecipe() ? "Change crafts; Alt for steps of 64" : "Change quantity; Alt for steps of 64"));
                 if (slot.alternatives.size() > 1) lines.add(BookmarkHelp.action("Shift + Wheel", "Cycle accepted ingredient"));
+                BookmarkHelp.section(lines, "Inspect");
+                lines.add(BookmarkHelp.action("Shift", "Show inventory-aware quantities"));
+                if (stockIssues.containsKey(record.id())) lines.add(Component.literal("Inventory calculation unavailable: " + stockIssues.get(record.id())).withStyle(net.minecraft.ChatFormatting.GOLD));
                 if (calculation != null) {
-                    if (calculation.valid()) { lines.add(BookmarkHelp.action("Shift", "Highlight inputs / results / surplus")); if (calculation.expected()) lines.add(Component.literal("~ Expected yield; chance results are not guaranteed").withStyle(net.minecraft.ChatFormatting.GOLD)); }
+                    if (calculation.valid()) {
+                        if (BookmarkClientConfig.SHIFT_MATERIAL_HIGHLIGHTS.get()) {
+                            lines.add(BookmarkHelp.action("Tab", "Inspect chain materials"));
+                            lines.addAll(BookmarkHelp.materialLegendLines());
+                        }
+                        if (calculation.expected()) lines.add(Component.literal("~ Expected yield; chance results are not guaranteed").withStyle(net.minecraft.ChatFormatting.GOLD));
+                    }
                     else lines.add(Component.literal("Chain unavailable: " + calculation.issue()).withStyle(net.minecraft.ChatFormatting.RED));
                 }
             } else lines.add(BookmarkHelp.hint());
             BookmarkRecipePreview.render(g, record, slot, ingredient, lines, x, y); return;
         }
         if (l.previous.contains(x, y) || l.next.contains(x, y)) {
-            var lines = Screen.hasAltDown() ? List.of(BookmarkHelp.action("LMB", "Change page"), BookmarkHelp.action("Drag + Hover", "Turn page after a short pause")) : List.of(BookmarkHelp.hint());
+            var lines = altDown ? List.of(BookmarkHelp.action("LMB", "Change page"), BookmarkHelp.action("Drag + Hover", "Turn page after a short pause")) : List.of(BookmarkHelp.hint());
             g.renderTooltip(font, lines, Optional.empty(), x, y); return;
         }
         if (l.footer.contains(x, y) && l.calculations.values().stream().anyMatch(result -> !result.valid())) {
-            List<Component> lines = Screen.hasAltDown() ? List.of(Component.literal("Chain unavailable. Hover its bracket for the reason.").withStyle(net.minecraft.ChatFormatting.RED)) : List.of(BookmarkHelp.hint());
+            List<Component> lines = altDown ? List.of(Component.literal("Chain unavailable. Hover its bracket for the reason.").withStyle(net.minecraft.ChatFormatting.RED)) : List.of(BookmarkHelp.hint());
             g.renderTooltip(font, lines, Optional.empty(), x, y);
         }
     }

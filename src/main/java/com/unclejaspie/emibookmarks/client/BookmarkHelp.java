@@ -8,6 +8,7 @@ import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipComponent
 import net.minecraft.client.renderer.MultiBufferSource;
 import org.joml.Matrix4f;
 import java.util.List;
+import com.unclejaspie.emibookmarks.bookmark.BookmarkMaterialHighlights;
 
 /** Only advertised inside the chosen recipe viewer; the item index cannot capture routes. */
 public final class BookmarkHelp {
@@ -17,7 +18,22 @@ public final class BookmarkHelp {
                 .append(Component.literal("ALT").withStyle(ChatFormatting.GOLD))
                 .append(Component.literal(" for hotkeys").withStyle(ChatFormatting.DARK_GRAY));
     }
-    public static Component title() { return Component.literal("Bookmark hotkeys").withStyle(ChatFormatting.GRAY); }
+    public static Component title() { return Component.literal("Bookmark controls").withStyle(ChatFormatting.WHITE, ChatFormatting.BOLD); }
+    public static void section(List<Component> lines, String title) {
+        if (!lines.isEmpty()) lines.add(Component.empty());
+        lines.add(Component.literal(title).withStyle(ChatFormatting.WHITE, ChatFormatting.BOLD));
+    }
+    public static List<Component> materialLegendLines() {
+        return List.of(Component.literal("Base inputs").withStyle(s -> s.withColor(BookmarkMaterialHighlights.INPUT))
+                        .append(Component.literal("  Needed from outside this group").withStyle(ChatFormatting.GRAY)),
+                Component.literal("Outputs").withStyle(s -> s.withColor(BookmarkMaterialHighlights.OUTPUT))
+                        .append(Component.literal("  Requested results of this chain").withStyle(ChatFormatting.GRAY)));
+    }
+    public static Component materialLegend() {
+        var legend = Component.literal("Hold Tab over a chain group to inspect materials.").withStyle(ChatFormatting.GRAY);
+        for (var line : materialLegendLines()) legend.append(Component.literal("\n")).append(line);
+        return legend;
+    }
     public static Component action(String key, String action) {
         return Component.empty().append(Component.literal(key).withStyle(ChatFormatting.GOLD))
                 .append(Component.literal("  " + action).withStyle(ChatFormatting.GRAY));
