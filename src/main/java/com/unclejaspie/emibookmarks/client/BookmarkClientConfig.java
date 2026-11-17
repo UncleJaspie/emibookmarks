@@ -17,6 +17,7 @@ public final class BookmarkClientConfig {
     public static final ForgeConfigSpec.BooleanValue COMBINE_INPUTS, MACHINE_BADGE, ROLE_ACCENTS, BATCH_LABEL, TREE_WORLD, TREE_BLUR, SHIFT_MATERIAL_HIGHLIGHTS;
     public static final ForgeConfigSpec.EnumValue<Background> BACKGROUND;
     public static final ForgeConfigSpec.BooleanValue OUTPUT_AWARE_STOCK;
+    public static final ForgeConfigSpec.BooleanValue CHECK_UPDATES;
     public static final ForgeConfigSpec.DoubleValue SIDEBAR_OPACITY, TREE_OPACITY;
 
     static {
@@ -30,6 +31,8 @@ public final class BookmarkClientConfig {
         OUTPUT_AWARE_STOCK = builder.comment("While holding Shift, allocate carried output items and recalculate remaining recipe work. Unsupported scopes keep original quantities.")
                 .define("outputAwareInventoryTracking", true);
         BATCH_LABEL = builder.define("leadingBatchMultiplier", true);
+        CHECK_UPDATES = builder.comment("Check public GitHub releases in the background when an inventory opens. A quiet notice appears only for newer compatible versions; no automatic downloads.")
+                .define("checkForUpdates",true);
         BACKGROUND = builder.defineEnum("sidebarBackground", Background.EMI);
         SIDEBAR_OPACITY = builder.defineInRange("customSidebarOpacity", 0.88, 0, 1);
         TREE_WORLD = builder.define("treeWorldBackground", true);

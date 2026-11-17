@@ -22,6 +22,7 @@ public final class BookmarkOptionsScreen extends Screen {
         toggle("Machine category badge", BookmarkClientConfig.MACHINE_BADGE, left, top + 24, buttonWidth);
         toggle("Output/input underlines", BookmarkClientConfig.ROLE_ACCENTS, left, top + 48, buttonWidth);
         toggle("Leading batch multiplier", BookmarkClientConfig.BATCH_LABEL, left, top + 72, buttonWidth);
+        toggle("Check for updates", BookmarkClientConfig.CHECK_UPDATES, left, top + 96, buttonWidth);
         addRenderableWidget(Button.builder(Component.literal("Background / opacity..."), b -> minecraft.setScreen(new BookmarkAppearanceScreen(this)))
                 .bounds(right, top, buttonWidth, 20).build());
         var export = addRenderableWidget(Button.builder(Component.literal("Export current EMI tree..."), b -> BookmarkTreeSharing.exportCurrent())
@@ -42,6 +43,8 @@ public final class BookmarkOptionsScreen extends Screen {
                 Component.literal("Hold Shift to show remaining crafts and inputs using carried outputs. Release to restore your saved plan.")));
         if (value == BookmarkClientConfig.SHIFT_MATERIAL_HIGHLIGHTS) builder.tooltip(net.minecraft.client.gui.components.Tooltip.create(
                 BookmarkHelp.materialLegend()));
+        if (value == BookmarkClientConfig.CHECK_UPDATES) builder.tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                Component.literal("Quietly check GitHub Releases in the background. Newer compatible versions appear above the inventory's bottom-left controls. No automatic downloads.")));
         addRenderableWidget(builder.bounds(x, y, buttonWidth, 20).build());
     }
     @Override public void render(GuiGraphics g, int x, int y, float delta) {
